@@ -1,0 +1,5 @@
+fpsample
+diffusers
+point_cloud_utils
+pyassimp
+trimesh
