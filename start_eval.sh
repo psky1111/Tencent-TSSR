@@ -23,8 +23,6 @@ export OFFLOAD_DEVICE=cpu
 export ZERO_STAGE=2
 export MIXED_PRECISION=bf16
 export OMP_NUM_THREADS=1
-export user="kaiyusong"
-export password="CcMwftrXIZ4VEY8NoQ6ENxYBek38qXUc"
 echo -e "EXTRA_ARGS=$EXTRA_ARGS"
 pip3 install pyassimp
 echo "Y" | apt install libassimp-dev
