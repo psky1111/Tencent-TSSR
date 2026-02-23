@@ -1,0 +1,34 @@
+eval_type: eval_meshtron
+eval_task_name: big_task_eval_char_plus_chosen_step27.5k_flow_matching_backbone
+output_dir: eval_output/{eval_type}/{eval_task_name}
+upload_all_results: true
+
+seeds: [123]  # seed
+
+detailed_eval_samples:  # The entrance of your json file path
+  - eval_data:
+      index_file_list:
+        - ./data/data_json_example.json # here is the path
+      need_face_range: [0, 7000]        # here is the face you want to use as the eval mesh
+
+eval_models:
+  meshtron:
+    model_config: config/model_configs/flow_mash.yaml  # model config. Please see the example: model_configs/flow_mash.yaml
+    model_save_dir: ckpt # model path
+    checkpoint_names: [checkpoint-60000] # ckpt version
+    infer_config:
+      batch_size: 1
+      pipeline_params:
+        n_max_triangles: 7000
+        temperature: 0.2
+        use_kv_cache: false
+        burn_in_triangles: null
+        degeneration_burn_in_triangles: 0
+        enable_bad_model: false
+        beam_num: null
+        constrain_sample: false
+        t: 0.01
+        inference_num: 200
+        strategy: "random"
+        cfg: 2 # 1.5 2 3 5 7
+        bad_model_path: null # this is for autocfg but is useless

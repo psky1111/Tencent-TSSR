@@ -1,0 +1,24 @@
+compute_environment: LOCAL_MACHINE
+deepspeed_config:
+  deepspeed_hostfile: CONFIG_HOSTFILE
+  deepspeed_multinode_launcher: standard
+  gradient_accumulation_steps: CONFIG_GRADIENT_ACCUMULATION_STEPS
+  offload_optimizer_device: CONFIG_OFFLOAD_DEVICE
+  offload_param_device: CONFIG_OFFLOAD_DEVICE
+  zero3_init_flag: false
+  zero_stage: CONFIG_ZERO_STAGE
+distributed_type: DEEPSPEED
+downcast_bf16: 'no'
+machine_rank: CONFIG_HOST_INDEX
+main_process_ip: CONFIG_CHIEF_IP
+main_process_port: 23457
+main_training_function: main
+mixed_precision: CONFIG_MIXED_PRECISION
+num_machines: CONFIG_HOST_NUM
+num_processes: CONFIG_PROCESS_NUM
+rdzv_backend: static
+same_network: true
+tpu_env: []
+tpu_use_cluster: false
+tpu_use_sudo: false
+use_cpu: false

@@ -1,6 +1,6 @@
 #!/bin/bash
 if [[ -z "${CONFIG}" ]]; then
-  EVAL_CONFIG=conf/eval_configs/eval_flow_new_backbone.yaml
+  EVAL_CONFIG=conf/eval_configs/eval.yaml
   echo ${MODEL_CONFIG}
 else
   EVAL_CONFIG="${CONFIG}"

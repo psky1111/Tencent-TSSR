@@ -1,0 +1,95 @@
+output_dir: exp/tssr/
+
+model_type: meshtron
+model_handler: src.model_handlers.meshtron_handler_flow.MeshtronHandlerV3
+reflow: false
+model:
+  pretrained_model_path: "" # ckpt path please use the default path of huggingface ckpt
+  meshtron_net:
+    trainable: true
+    save_model: true
+    subfolder: meshtron_net
+    target: src.custom_models.meshtron_opt.flow_mask_meshtron.MeshtronNet
+    use_face_count_id: true
+    params:
+      ignore_mismatched_sizes: true
+      dim: 2048
+      context_dim: 768
+      n_heads: 16
+      n_kv_heads: 16
+      depth: [4, 10, 10]
+      shorten_factor: 3
+      updown_sample_type: linear # linear
+      theta_rotary_emb: 1000000.0
+      ffn_multiple: 4
+      qk_norm: rms_norm
+      condition_interval: 4
+      num_timesteps: 1000
+      max_infer_triangles: 64000
+      time_freq_dim: 768
+      codebook_size: 1024
+      noise_type: "mask"
+      RoPE: "3d" # dafault 1d
+      Alibi: false # need to remove 
+      metric_induced: false # need to remove
+
+
+  point_encoder:
+    trainable: false
+    save_model: true
+    subfolder: point_encoder
+    pretrained_path: # please use the huggingface pretrain point encoder
+    target: src.custom_models.autoencoders.michelangelo_autoencoder.MichelangeloAutoencoder
+    params:
+      ignore_mismatched_sizes: true
+
+tokenizer:
+  target: src.custom_models.meshtron_opt.tokenizer.MeshTokenizer
+  subfolder: tokenizer
+  params:
+    n_discrete_size: 1024  # 
+    bos_len: 9
+    eos_len: 9
+    n_sliding_triangles: 4000  
+    split_method: random
+
+data:
+  dataset_config: "./config/dataset/flexi_mesh_dataset.yaml" # for training
+  dataloader_num_workers: 4
+  segment_per_batch: 1  
+
+
+trainer:
+  scale_lr: false
+  learning_rate: 1e-4
+  lr_scheduler: constant_with_warmup
+  lr_warmup_steps: 50
+  max_train_steps: 1000000
+  max_grad_norm: 1
+  train_batch_size: 1
+  gradient_checkpointing: true
+  allow_tf32: true
+  checkpointing_steps: 500
+  checkpoints_total_limit: 1
+
+loss:
+  main_loss_weight: 1.0
+
+validation:
+  skip_validation: false  
+  first_step_validation: true 
+  validation_steps: 500
+  validation_epochs: 500
+  seed: 123
+  batch_size: 1
+  fix_train_num: 2  
+  fix_val_num: 4 
+  random_val_num: 2  
+  pipeline_params:
+    n_max_triangles: 10000
+    temperature: 0.2
+    use_kv_cache: true
+    burn_in_triangles: null
+    degeneration_burn_in_triangles: 0
+    beam_num: null
+    constrain_sample: false

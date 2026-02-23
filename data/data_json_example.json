@@ -1,0 +1,17 @@
+[
+  {
+    "model_id": 6,
+    "category": null,
+    "category_path_en": null,
+    "face_info": {
+      "face_cnt": 4796
+    },
+    "obj_file": {
+      "aws_obj_url": "./data/9.obj",
+      "obj_url": "./data/9.obj"
+    },
+    "mesh_loaded": true,
+    "mesh_vertices": 1851,
+    "mesh_faces": 4796
+  }
+]

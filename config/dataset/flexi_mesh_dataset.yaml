@@ -1,0 +1,25 @@
+dataset_class: src.custom_datasets.flexi_dataset.mesh_dataset_local.MeshDataset
+collate_fn: src.custom_datasets.flexi_dataset.mesh_dataset_local.collate_fn_for_collected_batch
+
+n_samples: 49152
+sampling_strategy: fps
+use_sharp_points: false
+convert_y_up_to_z_up: true
+augment_prob: 0.5
+deepmesh: true
+
+
+face_bucket_interval: 256
+bucket_weights_method: src.custom_datasets.flexi_dataset.bucket_weights.comlpex_bucket_weights
+
+train_sample_info_list:
+  - eval_data:
+      index_file_list:
+        - ./data/data_json_example.json # here is the path
+      need_face_range: [0, 7000]        # here is the face you want to use as the training mesh
+
+val_sample_info_list:
+  - eval_data:
+      index_file_list:
+        - ./data/data_json_example.json # here is the path
+      need_face_range: [0, 7000]        # here is the face you want to use as the eval mesh
