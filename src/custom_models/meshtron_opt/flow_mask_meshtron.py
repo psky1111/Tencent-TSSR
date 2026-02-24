@@ -193,8 +193,8 @@ class MeshtronNet(ModelMixin, ConfigMixin):
     
     def generate_sampling_noise_scheduler(self,N:int):
         T_train = self.scheduler.size(0)
-        ideal_t_points = np.power(np.arange(0, N + 1) / N, 0.5)
-        unfiltered_indices = np.floor(ideal_t_points * T_train)
+        linear_progress = np.arange(0, N + 1) / N
+        unfiltered_indices = np.floor(linear_progress * T_train)
         unfiltered_indices = np.minimum(unfiltered_indices, T_train).astype(int)
         time_indices = np.unique(unfiltered_indices)
         h_values = np.diff(time_indices) / T_train
@@ -479,7 +479,7 @@ class MeshtronNet(ModelMixin, ConfigMixin):
         inter_x = []
         no_mask_mode = self.no_mask_mode.to(device=x_t.device)
         mask_mode = self.mask_mode.to(device=x_t.device)
-        mask_logits_scheduler = torch.linspace(0.5,0.7,num_sampling_steps,device=device)
+        mask_logits_scheduler = torch.linspace(0.2,0.7,num_sampling_steps,device=device)
 
         for step in tqdm(range(len(hs)), desc="Sampling"):
             #t_val = step * h
