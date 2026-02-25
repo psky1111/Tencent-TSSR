@@ -118,22 +118,8 @@ class MeshtronNet(ModelMixin, ConfigMixin):
         metric_induced=False,
         **kwargs,
     ):
-        """ 
-        由于继承了 ConfigMixin 类, 构造函数的所有入参都会记录到 self.config 属性中, 其他类方法也可以通过 self.config.xxx 访问
-        Args:
-            dim: 进行 attention 时的 inner_dim。
-            heads: attention 中 inner_dim 所需划分的 head 数。
-            context_dim: 来自于点云编码器或其他模态编码器的 embedding 维度，用于在 transformer 结构中做 cross attention。
-            conditional: 是否使用外部编码器的 embedding 进行 cross attention。
-            depth: 确定 hourglass transformer 基础架构的参数，以 [4, 8, 12] 的形式提供。
-            shorten_factor: 每一次降采样 token 数量的缩减系数。
-            updown_sample_type: 降采样与上采样的方式。
-            vocab_size: 词表的大小，需要根据此确定最终分类的数量。
-            n_sliding_triangles: sliding window 训练机制中的 window 长度，以三角形数量为单位，需要准确提供以保证训练推理一致。
-            max_infer_triangles: 推理时的最大面数，用于预计算 freqs_cis，防止反复计算造成 OOM，需要确保实际使用时不要超出该上限。
-        """
         super().__init__()
-        # 检查输入参数是否正确
+
         if dim % n_heads != 0:
             raise ValueError(f"dim: {dim} must be divisible by heads: {n_heads}")
         head_dim = dim // n_heads
@@ -144,22 +130,20 @@ class MeshtronNet(ModelMixin, ConfigMixin):
         self.token_emb = nn.Embedding(vocab_size, dim)
         self.face_count_emb = DiscreteValueEmbeding(embedding_dim=context_dim)
 
-        # 实例化 hourglass transformer 模块
+
         recursive_depth = [
             depth[0] // 2, 
             [depth[1] // 2, depth[2], depth[1] // 2], 
             depth[0] // 2
         ]
         
-        # NOTE: 确定 sliding window attention 感受野，需要精准提供
+
         window_len = n_sliding_triangles * 9  
         self.noise_type = noise_type
         self.connect_loss = None
 
-        # 训练与推理时的最大面数
         max_token_num = max_infer_triangles * 9
-        #self.freqs_cis = precompute_freqs_cis(head_dim, max_token_num, theta=theta_rotary_emb)
-        #self.freqs_cis = precompute_freqs_cis_3d(head_dim*3, max_token_num, theta=theta_rotary_emb)
+
         self.freqs_cis =  MultiLevelRoPE(head_dim, max_token_num)  
         self.alibi = None
         
