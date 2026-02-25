@@ -90,6 +90,8 @@ class Euler_correct_sampler_h:
 class MeshtronNet(ModelMixin, ConfigMixin):
     _supports_gradient_checkpointing = True
     
+    _supports_gradient_checkpointing = True
+    
     @register_to_config
     def __init__(
         self,
@@ -116,8 +118,22 @@ class MeshtronNet(ModelMixin, ConfigMixin):
         metric_induced=False,
         **kwargs,
     ):
-
+        """ 
+        由于继承了 ConfigMixin 类, 构造函数的所有入参都会记录到 self.config 属性中, 其他类方法也可以通过 self.config.xxx 访问
+        Args:
+            dim: 进行 attention 时的 inner_dim。
+            heads: attention 中 inner_dim 所需划分的 head 数。
+            context_dim: 来自于点云编码器或其他模态编码器的 embedding 维度，用于在 transformer 结构中做 cross attention。
+            conditional: 是否使用外部编码器的 embedding 进行 cross attention。
+            depth: 确定 hourglass transformer 基础架构的参数，以 [4, 8, 12] 的形式提供。
+            shorten_factor: 每一次降采样 token 数量的缩减系数。
+            updown_sample_type: 降采样与上采样的方式。
+            vocab_size: 词表的大小，需要根据此确定最终分类的数量。
+            n_sliding_triangles: sliding window 训练机制中的 window 长度，以三角形数量为单位，需要准确提供以保证训练推理一致。
+            max_infer_triangles: 推理时的最大面数，用于预计算 freqs_cis，防止反复计算造成 OOM，需要确保实际使用时不要超出该上限。
+        """
         super().__init__()
+        # 检查输入参数是否正确
         if dim % n_heads != 0:
             raise ValueError(f"dim: {dim} must be divisible by heads: {n_heads}")
         head_dim = dim // n_heads
@@ -128,18 +144,23 @@ class MeshtronNet(ModelMixin, ConfigMixin):
         self.token_emb = nn.Embedding(vocab_size, dim)
         self.face_count_emb = DiscreteValueEmbeding(embedding_dim=context_dim)
 
+        # 实例化 hourglass transformer 模块
         recursive_depth = [
             depth[0] // 2, 
             [depth[1] // 2, depth[2], depth[1] // 2], 
             depth[0] // 2
         ]
         
+        # NOTE: 确定 sliding window attention 感受野，需要精准提供
         window_len = n_sliding_triangles * 9  
         self.noise_type = noise_type
         self.connect_loss = None
 
+        # 训练与推理时的最大面数
         max_token_num = max_infer_triangles * 9
-        self.freqs_cis =  MultiLevelRoPE(head_dim, max_token_num) 
+        #self.freqs_cis = precompute_freqs_cis(head_dim, max_token_num, theta=theta_rotary_emb)
+        #self.freqs_cis = precompute_freqs_cis_3d(head_dim*3, max_token_num, theta=theta_rotary_emb)
+        self.freqs_cis =  MultiLevelRoPE(head_dim, max_token_num)  
         self.alibi = None
         
         self.hourglass_transformer = HourglassCasualSlidingTransformerFlow(
@@ -156,8 +177,10 @@ class MeshtronNet(ModelMixin, ConfigMixin):
             condition_interval=condition_interval,
         )
         
+        # diffusion component
         self.scheduler = torch.linspace(
             1 / num_timesteps, 1, steps=num_timesteps)
+        #self.scheduler = torch.linspace(0,1,steps=1/num_timesteps)
         self.timesteps_proj = Timesteps(num_channels=time_freq_dim, flip_sin_to_cos=True, downscale_freq_shift=0)
         self.time_embedder = TimestepEmbedding(in_channels=time_freq_dim, time_embed_dim=time_freq_dim)
         self.time_proj = nn.Linear(time_freq_dim, context_dim)
@@ -194,7 +217,10 @@ class MeshtronNet(ModelMixin, ConfigMixin):
     def generate_sampling_noise_scheduler(self,N:int):
         T_train = self.scheduler.size(0)
         linear_progress = np.arange(0, N + 1) / N
-        unfiltered_indices = np.floor(linear_progress * T_train)
+        #ideal_t_points = 0.5 * (1 - np.cos(linear_progress * np.pi))
+        ideal_t_points = linear_progress
+        #ideal_t_points = np.power(np.arange(0, N + 1) / N, 2)
+        unfiltered_indices = np.floor(ideal_t_points * T_train)
         unfiltered_indices = np.minimum(unfiltered_indices, T_train).astype(int)
         time_indices = np.unique(unfiltered_indices)
         h_values = np.diff(time_indices) / T_train
@@ -254,9 +280,12 @@ class MeshtronNet(ModelMixin, ConfigMixin):
     
     def forward_hidden(self, input_ids, context, t, cache_kv=False, cache_position=None, is_sampling=False, segment_position=0,
                 face_count_id=None):
+        # 将 cache 清理工作放在 forward 函数内部，无需在外部调用。避免 validation 开启 cache 后忘记关闭，对训练产生影响。
+        # face_count_id now is the mode flag
         if not cache_kv:
             self.hourglass_transformer.clean_kv_cache()
         if not is_sampling:
+            # 在当前逻辑下，routing_cache 一定只有在采样阶段才会开启
             self.hourglass_transformer.clean_routing_cache()
 
             
@@ -276,6 +305,11 @@ class MeshtronNet(ModelMixin, ConfigMixin):
         else:
             if self.freqs_cis.device != x.device:
                 self.freqs_cis = self.freqs_cis.to(device=x.device)
+        if self.alibi is not None:
+            with torch.no_grad():
+                self.alibi.token_level_alibi = self.alibi("token",seq_len=input_ids.shape[1],device=x.device).to(x.dtype)
+                self.alibi.vertex_level_alibi = self.alibi("vertex",seq_len=input_ids.shape[1]//3,device=x.device).to(x.dtype)
+                self.alibi.face_level_alibi = self.alibi("face",seq_len=input_ids.shape[1]//9,device=x.device).to(x.dtype)
         
         t_proj = self.timesteps_proj(t).type_as(x)
         t_emb = self.time_embedder(t_proj).type_as(x)
@@ -298,12 +332,26 @@ class MeshtronNet(ModelMixin, ConfigMixin):
         return hidden_states
     
     def x2prob(self,x: torch.Tensor, temperature: float = 1.0) -> torch.Tensor:
+        """
+        Converts discrete token indices to a probability distribution.
+        
+        If temperature is high, the distribution is "soft" (closer to uniform).
+        If temperature is very low, it approaches a one-hot distribution.
+        """
+        # Create one-hot vectors
         one_hot = torch.nn.functional.one_hot(x, num_classes=self.true_codebook_size).float()
+        
+        # If temperature is 1.0, this is just the one-hot distribution.
         if temperature == 1.0:
             return one_hot
             
+        # Create "logits" by scaling the one-hot. The correct token gets a high
+        # positive value, and all others get a small negative value.
+        # This ensures softmax(logits) is a soft peak at the correct token.
         logits = torch.log(one_hot + 1e-9) # Add epsilon for numerical stability
         
+        # Apply temperature to the logits.
+        # A higher temperature "flattens" the final softmax distribution.
         soft_probs = torch.nn.functional.softmax(logits / temperature, dim=-1)
         
         return soft_probs
@@ -313,6 +361,62 @@ class MeshtronNet(ModelMixin, ConfigMixin):
         pt = pt.reshape(-1,V)
         xt = torch.multinomial(pt,1)
         return xt.reshape(B,S)
+    
+    def forward_u(self,t,xt,model_output):
+        t = t.clamp(1e-3,1)
+        dirac_xt = self.x2prob(xt)
+        p1t = torch.softmax(model_output,dim=-1)
+        kappa_coeff = self.kapper.derivate(t)/ (1 - self.kapper(t))
+        return kappa_coeff * (p1t - dirac_xt)
+    
+    def forward_u_metric(self,t,xt:torch.Tensor,model_output:torch.Tensor):
+        beta_derivative = self.beta_derivative(t)
+        x_1 = model_output.softmax(dim=-1).argmax(dim=-1)
+        B, S = x_1.shape
+        V = self.config.codebook_size
+        if isinstance(t, float):
+            t = torch.tensor([t],device=x_1.device)
+            # --- 1. Create the Coordinate Tensors ---
+            # The ground truth tokens, reshaped for broadcasting
+        x_1_coords = x_1.view(B, S, 1).float() # Shape: [B, S, 1]
+            
+            # A tensor representing all possible token values [0, 1, ..., V-1]
+        vocab_coords = torch.arange(V, device=x_1.device).view(1, 1, V).float() # Shape: [1, 1, V]
+            
+            # --- 2. THE CRITICAL STEP: Calculate Distance in Coordinate Space ---
+            # Broadcasting: [B, S, 1] - [1, 1, V] -> [B, S, V]
+            # This calculates the difference between each token in x_1 and every
+            # possible token in the vocabulary.
+        distance_matrix_signed = self.norm(x_1_coords) - self.norm(vocab_coords)
+        distance_matrix_squared = distance_matrix_signed**2 # This is our d(x, x_1)
+
+            # --- THE FIX IS HERE ---
+            # Get beta_t from the new, controllable scheduler.
+        beta_t = self.beta(t).view(B, 1, 1)
+
+        logits_t = -beta_t * distance_matrix_squared
+        probs_t = torch.nn.functional.softmax(logits_t, dim=-1)
+
+        distance_matrix_x1t_z = ((self.norm(xt) - self.norm(x_1))**2).unsqueeze(-1)
+        distance_term = (distance_matrix_x1t_z - distance_matrix_squared).relu()
+        u = probs_t*distance_term*beta_derivative
+        return u
+
+    
+    def backward_u(self,t,xt,x_noise,model_output):
+        t = t.clamp(1e-3,1)
+        dirac_xt = self.x2prob(xt)
+        #x0 = torch.zeros_like(xt) + self.mask_token_id
+        #x0 = x0.long()
+        p0t = torch.ones_like(model_output).softmax(dim=-1)
+        #diract_noise = self.x2prob(x_noise)
+        #kapper_t = self.kapper(t)
+        #p0t = (1-kapper_t)*diract_noise + kapper_t*dirac_xt
+        kappa_coeff = self.kapper.derivate(t)/ (self.kapper(t))
+        return kappa_coeff * (dirac_xt - p0t)
+    
+    def correct_u(self,t,xt,x_noise,model_output,alpha_t, beta_t):
+        return alpha_t*self.forward_u(t,xt,model_output) - beta_t*self.backward_u(t,xt,x_noise,model_output)
 
     
     def add_noise(
@@ -323,7 +427,20 @@ class MeshtronNet(ModelMixin, ConfigMixin):
         max_temp=10.,
         min_temp=1.0
     ) -> torch.Tensor:
+        """
+        Calculates the conditional path probability p_t(x | x_1) for a metric-induced path.
 
+        This function does NOT compute the marginal p_t(x_t). It computes the tractable
+        conditional distribution needed to sample x_t during training.
+
+        Args:
+            x_1 (torch.Tensor): The ground-truth target tokens (the condition). Shape: [B, S].
+            x_0: The pure nose tokens
+            t (torch.Tensor): The time, sampled per batch item. Shape: [B, 1, 1].
+
+        Returns:
+            torch.Tensor: The conditional probabilities p_t(x | x_1). Shape: [B, S, V].
+        """
         if isinstance(t, float):
             t = torch.tensor([t],device=x_1.device)
         t = t.clamp(0,1-1e-3) # avoid NAN
@@ -347,11 +464,6 @@ class MeshtronNet(ModelMixin, ConfigMixin):
         with torch.no_grad():
             v_pred = self.forward_hidden(input_ids, context,timestep, **kwargs)
         acc = self.to_acc(v_pred.detach())
-        return acc
-    
-    def forward_error(self, input_ids, context, timestep, **kwargs):
-        v_pred = self.forward_hidden(input_ids, context,timestep, **kwargs)
-        acc = self.to_acc(v_pred)
         return acc
     
     def forward_noise(self,x:torch.Tensor,t:torch.Tensor,should_noise:torch.Tensor | None,eps=1e-3)->torch.Tensor:
@@ -479,7 +591,7 @@ class MeshtronNet(ModelMixin, ConfigMixin):
         inter_x = []
         no_mask_mode = self.no_mask_mode.to(device=x_t.device)
         mask_mode = self.mask_mode.to(device=x_t.device)
-        mask_logits_scheduler = torch.linspace(0.2,0.7,num_sampling_steps,device=device)
+        mask_logits_scheduler = torch.linspace(0.5,0.9,num_sampling_steps,device=device)
 
         for step in tqdm(range(len(hs)), desc="Sampling"):
             #t_val = step * h
@@ -489,16 +601,15 @@ class MeshtronNet(ModelMixin, ConfigMixin):
             scaler = t/1000
             scaler = max(scaler,1e-5)
             x_t = u_ts.softmax(dim=-1).argmax(dim=-1)
-            inter_x.append(x_t.detach().cpu())
             u_ts, _ = self.forward(x_t, context, t,face_count_id=no_mask_mode)
-            x_t = u_ts.softmax(dim=-1).argmax(dim=-1)
             pred_acc = self.forward_classifier(x_t, context, t,face_count_id=no_mask_mode)
             pred_acc = pred_acc.sigmoid().squeeze(dim=-1) # [0,1]
+            x_t = u_ts.softmax(dim=-1).argmax(dim=-1)
             inter_x.append(x_t.detach().cpu())
 
-            pred_mask = pred_acc < mask_logits_scheduler[step]
+            pred_mask = pred_acc < 0.5
             pred_mask = pred_mask.long()
-            print(f"the mask num is {pred_mask.sum().item()}")
+
             x_t = pred_mask * self.mask_token_id + (1 - pred_mask) * x_t
 
         if return_inter:
@@ -506,13 +617,15 @@ class MeshtronNet(ModelMixin, ConfigMixin):
         return inter_x[-1]
     
     def clean_cache(self):
-        pass
+        self.hourglass_transformer.clean_kv_cache()
+        self.hourglass_transformer.clean_routing_cache()
 
     def prepare_cache(self, config=None):
-        pass
+        self.hourglass_transformer.prepare_kv_cache(config)
     
     def reorder_cache(self, all_chosen_beam_idx):
-        pass
+        self.hourglass_transformer.reorder_kv_cache(all_chosen_beam_idx)
+        self.hourglass_transformer.reorder_routing_cache(all_chosen_beam_idx)
 
     def _set_gradient_checkpointing(self, enable=True,gradient_checkpointing_func=None, Callable = None):
         #if hasattr(module, "gradient_checkpointing"):
