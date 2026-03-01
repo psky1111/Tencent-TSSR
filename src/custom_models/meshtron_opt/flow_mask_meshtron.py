@@ -9,6 +9,7 @@ from src.custom_models.meshtron_opt.attention import MultiLevelRoPE
 from src.custom_models.meshtron_opt.hourglass_transformer import HourglassCasualSlidingTransformerFlow
 from src.custom_models.meshtron_opt.modules import DiscreteValueEmbeding
 import torch.distributions as dist
+from torch.distributions import Categorical
 import numpy as np
 
 from collections import defaultdict
@@ -575,7 +576,7 @@ class MeshtronNet(ModelMixin, ConfigMixin):
         inter_x = []
         no_mask_mode = self.no_mask_mode.to(device=x_t.device)
         mask_mode = self.mask_mode.to(device=x_t.device)
-        mask_logits_scheduler = torch.linspace(0.5,0.9,num_sampling_steps,device=device)
+        mask_logits_scheduler = torch.linspace(0.2,0.9,num_sampling_steps,device=device)
 
         for step in tqdm(range(len(hs)), desc="Sampling"):
             #t_val = step * h
@@ -591,10 +592,21 @@ class MeshtronNet(ModelMixin, ConfigMixin):
             x_t = u_ts.softmax(dim=-1).argmax(dim=-1)
             inter_x.append(x_t.detach().cpu())
 
-            pred_mask = pred_acc < 0.5
-            pred_mask = pred_mask.long()
+            mask_prob = (1 - pred_acc) * mask_logits_scheduler[step]
+            mask_prob = torch.clamp(mask_prob, min=1e-6, max=1.0 - 1e-6)
 
+            # Construct logits safely
+            # Note: Instead of log(p), we can pass the probabilities directly to Categorical(probs=...)
+            # which is often more numerically stable than manual log calculation.
+            mask_probs = torch.stack([1 - mask_prob, mask_prob], dim=-1)
+
+            # Sample the mask: 0 is keep, 1 is mask
+            mask_dist = Categorical(probs=mask_probs)
+            pred_mask = mask_dist.sample()
+
+            # 4. Final token update
             x_t = pred_mask * self.mask_token_id + (1 - pred_mask) * x_t
+
 
         if return_inter:
             return inter_x
