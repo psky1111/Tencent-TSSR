@@ -587,9 +587,9 @@ class MeshtronNet(ModelMixin, ConfigMixin):
             scaler = max(scaler,1e-5)
             x_t = u_ts.softmax(dim=-1).argmax(dim=-1)
             u_ts, _ = self.forward(x_t, context, t,face_count_id=no_mask_mode)
+            x_t = u_ts.softmax(dim=-1).argmax(dim=-1)
             pred_acc = self.forward_classifier(x_t, context, t,face_count_id=no_mask_mode)
             pred_acc = pred_acc.sigmoid().squeeze(dim=-1) # [0,1]
-            x_t = u_ts.softmax(dim=-1).argmax(dim=-1)
             inter_x.append(x_t.detach().cpu())
 
             mask_prob = (1 - pred_acc) * mask_logits_scheduler[step]
